@@ -107,10 +107,10 @@ func isPresent(s string, servers []string) bool {
 	return false
 }
 
-func NewProcessor(config models.Configuration, mutex *sync.RWMutex) Processor {
+func NewProcessor(config models.Configuration, mutex *sync.RWMutex, clientMap map[string]*http.Client) Processor {
 	return &configProcessor{
 		config:    config,
 		mutex:     mutex,
-		clientMap: make(map[string]*http.Client),
+		clientMap: clientMap,
 	}
 }

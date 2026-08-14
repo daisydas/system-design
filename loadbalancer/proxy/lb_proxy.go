@@ -2,10 +2,13 @@ package proxy
 
 import (
 	"golang.org/x/net/context"
+	"io"
 	"log"
+	"net"
 	"net/http"
-	"net/http/httputil"
+	"net/url"
 	"system-design/loadbalancer/config"
+	"time"
 )
 
 type Sender interface {
@@ -19,6 +22,7 @@ type sender struct {
 }
 
 type Request struct {
+	Completed   chan bool
 	HttpRequest *http.Request
 	HttpWriter  http.ResponseWriter
 }
@@ -44,22 +48,52 @@ func (s *sender) Send(ctx context.Context) {
 
 			host := cfg.CurrentAPIServers[currentServerIndex]
 			client := s.configProcessor.GetClients()[host]
-			req.HttpRequest.Host = host
-			req.HttpRequest.URL.Host = host
-			go s.forwardRequest(client.Transport, req)
+
+			proxyUrl := &url.URL{
+				Scheme: "http",
+				Host:   host,
+				Path:   req.HttpRequest.URL.Path,
+			}
+			proxyHttpReq, _ := http.NewRequest(req.HttpRequest.Method, proxyUrl.String(), req.HttpRequest.Body)
+			go s.forwardRequest(client, proxyHttpReq, req.HttpWriter, req.Completed)
 			currentServerIndex++
 		case <-ctx.Done():
 			log.Print(ctx.Err())
-			break
+			return
 		}
 	}
 }
 
-func (s *sender) forwardRequest(transport http.RoundTripper, req *Request) {
-	proxy := &httputil.ReverseProxy{
-		Transport: transport,
+func (s *sender) forwardRequest(client *http.Client, req *http.Request, writer http.ResponseWriter, completed chan bool) {
+	resp, err := client.Do(req)
+	if err != nil {
+		conn, connErr := net.DialTimeout("tcp", req.Host, 10*time.Millisecond)
+		if connErr != nil {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		conn.Close()
+		http.Error(writer, err.Error(), http.StatusBadGateway)
+		return
 	}
-	proxy.ServeHTTP(req.HttpWriter, req.HttpRequest)
+	defer resp.Body.Close()
+	for k, v := range resp.Header {
+		for _, val := range v {
+			writer.Header().Add(k, val)
+		}
+	}
+
+	// 2. Write status code SECOND
+	writer.WriteHeader(200)
+
+	// 3. Copy body LAST
+	_, err = io.Copy(writer, resp.Body)
+	if err != nil {
+		log.Printf("Error copying response body: %v", err)
+	}
+	completed <- true
+	return
+
 }
 
 func New(configProcessor config.Processor, requestChan chan *Request, forceReadConfig chan struct{}) Sender {

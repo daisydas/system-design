@@ -3,7 +3,6 @@ package servers
 import (
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"net/http"
 )
 
 type ServerN struct {
@@ -14,8 +13,8 @@ type ServerN struct {
 func (s1 *ServerN) Start() {
 	ge := gin.Default()
 	ge.Handle("GET", "/api/fibonacci", func(c *gin.Context) {
+		fmt.Printf("on server: %v\n", s1.port)
 		out := getFibonacciSeries(s1.maxRange)
-		c.Writer.WriteHeader(http.StatusOK)
 		c.JSON(200, gin.H{
 			"whichServer": s1.port,
 			"fibonacci":   out,

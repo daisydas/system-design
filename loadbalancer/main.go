@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"system-design/loadbalancer/proxy"
 	"system-design/loadbalancer/pubsub"
 	"system-design/loadbalancer/servers"
+	"time"
 )
 
 const maxServers = 5
@@ -28,7 +30,8 @@ func main() {
 	cp := config.NewProcessor(models.Configuration{
 		CurrentAPIServers: healthyServers,
 		Algorithm:         "RR",
-	}, &mutex)
+	}, &mutex, getClientMap(healthyServers))
+
 	hc := health.NewHealthChecker(cp, configChanged)
 
 	go hc.HealthCheck(ctx)
@@ -45,11 +48,29 @@ func main() {
 	})
 
 	sh := serveHandler{reqChan: reqChan}
-	http.HandleFunc("/load-balance", sh.requestHandler)
+	http.HandleFunc("/api/fibonacci", sh.requestHandler)
 
 	fmt.Println("Server starting on :8080...")
 	_ = http.ListenAndServe(":8080", nil)
 
+}
+
+func getClientMap(healthyServers []string) map[string]*http.Client {
+	clientMap := make(map[string]*http.Client)
+	for i := 0; i < len(healthyServers); i++ {
+		client := http.Client{
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout: 5 * time.Second,
+				}).DialContext,
+				MaxIdleConns:    5,
+				MaxConnsPerHost: 10,
+				IdleConnTimeout: 5 * time.Second,
+			},
+		}
+		clientMap[healthyServers[i]] = &client
+	}
+	return clientMap
 }
 
 func startServers(maxServers int) []string {
@@ -65,13 +86,20 @@ func startServers(maxServers int) []string {
 }
 
 type serveHandler struct {
-	reqChan chan *proxy.Request
+	reqChan  chan *proxy.Request
+	respChan chan http.Response
 }
 
 func (sh *serveHandler) requestHandler(w http.ResponseWriter, r *http.Request) {
+	completed := make(chan bool)
 	sh.reqChan <- &proxy.Request{
+		Completed:   completed,
 		HttpRequest: r,
 		HttpWriter:  w,
+	}
+
+	select {
+	case <-completed:
 	}
 
 }

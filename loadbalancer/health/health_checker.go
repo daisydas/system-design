@@ -24,6 +24,7 @@ func (hc *healthChecker) HealthCheck(ctx context.Context) {
 	for {
 		select {
 		case <-time.After(time.Until(targetTime)):
+			fmt.Println("reading configs")
 			targetTime = hc.updateConfig()
 		case <-hc.configChanged:
 			targetTime = hc.updateConfig()
