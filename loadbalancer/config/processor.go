@@ -1,9 +1,11 @@
 package config
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"system-design/loadbalancer/config/models"
+	"time"
 )
 
 type Processor interface {
@@ -28,35 +30,54 @@ func (p *configProcessor) Read() models.Configuration {
 func (p *configProcessor) GetClients() map[string]*http.Client {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
-	return p.clientMap
+
+	newMap := make(map[string]*http.Client)
+	for k, v := range p.clientMap {
+		newMap[k] = v
+	}
+	return newMap
 }
 
 func (p *configProcessor) Write(cfg models.Configuration) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	p.config = cfg
-	updateClients(p.clientMap, cfg)
+	for i := 0; i < len(cfg.CurrentAPIServers); i++ {
+		client, _ := p.clientMap[cfg.CurrentAPIServers[i]]
+		if client == nil {
+			client = &http.Client{
+				Transport: getTransport(),
+			}
+		}
+		p.clientMap[cfg.CurrentAPIServers[i]] = client
+	}
+
+	for k, _ := range p.clientMap {
+		if !isActiveServer(cfg.CurrentAPIServers, k) {
+			delete(p.clientMap, k)
+		}
+	}
+
 	return
 }
 
-func updateClients(clientMap map[string]*http.Client, cfg models.Configuration) {
-	for i := 0; i < len(cfg.CurrentAPIServers); i++ {
-		if _, ok := clientMap[cfg.CurrentAPIServers[i]]; !ok {
-			continue
+func isActiveServer(currentServers []string, mapHost string) bool {
+	for _, server := range currentServers {
+		if server == mapHost {
+			return true
 		}
-		client := &http.Client{
-			Transport: getTransport(),
-			Timeout:   10,
-		}
-		clientMap[cfg.CurrentAPIServers[i]] = client
 	}
+	return false
 }
 
 func getTransport() http.RoundTripper {
 	return &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: 5 * time.Second,
+		}).DialContext,
 		MaxIdleConns:    5,
 		MaxConnsPerHost: 10,
-		IdleConnTimeout: 5,
+		IdleConnTimeout: 5 * time.Second,
 	}
 }
 

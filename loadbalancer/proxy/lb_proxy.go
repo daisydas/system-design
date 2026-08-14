@@ -2,12 +2,10 @@ package proxy
 
 import (
 	"golang.org/x/net/context"
-	"io"
 	"log"
-	"net"
 	"net/http"
+	"net/http/httputil"
 	"system-design/loadbalancer/config"
-	"time"
 )
 
 type Sender interface {
@@ -48,7 +46,7 @@ func (s *sender) Send(ctx context.Context) {
 			client := s.configProcessor.GetClients()[host]
 			req.HttpRequest.Host = host
 			req.HttpRequest.URL.Host = host
-			go s.forwardRequest(client, req)
+			go s.forwardRequest(client.Transport, req)
 			currentServerIndex++
 		case <-ctx.Done():
 			log.Print(ctx.Err())
@@ -57,26 +55,11 @@ func (s *sender) Send(ctx context.Context) {
 	}
 }
 
-func (s *sender) forwardRequest(client *http.Client, req *Request) {
-	resp, err := client.Do(req.HttpRequest)
-	if err != nil {
-		conn, connErr := net.DialTimeout("tcp", req.HttpRequest.Host, 10*time.Millisecond)
-		if connErr != nil {
-			s.forceReadConfig <- struct{}{}
-			s.requestChan <- req
-			return
-		}
-		conn.Close()
-		http.Error(req.HttpWriter, err.Error(), http.StatusBadGateway)
-		return
+func (s *sender) forwardRequest(transport http.RoundTripper, req *Request) {
+	proxy := &httputil.ReverseProxy{
+		Transport: transport,
 	}
-	defer resp.Body.Close()
-
-	for k, v := range resp.Header {
-		req.HttpWriter.Header()[k] = v
-	}
-	req.HttpWriter.WriteHeader(resp.StatusCode)
-	_, err = io.Copy(req.HttpWriter, resp.Body)
+	proxy.ServeHTTP(req.HttpWriter, req.HttpRequest)
 }
 
 func New(configProcessor config.Processor, requestChan chan *Request, forceReadConfig chan struct{}) Sender {
