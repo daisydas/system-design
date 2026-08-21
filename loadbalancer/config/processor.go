@@ -8,9 +8,14 @@ import (
 	"time"
 )
 
+const (
+	Create = "create"
+	Update = "update"
+)
+
 type Processor interface {
 	Read() models.Configuration
-	Write(models.Configuration)
+	Write(models.Configuration, string)
 	Equal(models.Configuration, models.Configuration) bool
 	GetClients() map[string]*http.Client
 }
@@ -38,10 +43,17 @@ func (p *configProcessor) GetClients() map[string]*http.Client {
 	return newMap
 }
 
-func (p *configProcessor) Write(cfg models.Configuration) {
+func (p *configProcessor) Write(cfg models.Configuration, action string) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	p.config = cfg
+
+	if action == Create {
+		p.config = cfg
+	} else if action == Update {
+		p.config.CurrentAPIServers = append(p.config.CurrentAPIServers, cfg.CurrentAPIServers...)
+		p.config.Algorithm = cfg.Algorithm
+	}
+
 	for i := 0; i < len(cfg.CurrentAPIServers); i++ {
 		client, _ := p.clientMap[cfg.CurrentAPIServers[i]]
 		if client == nil {

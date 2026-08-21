@@ -3,6 +3,7 @@ package servers
 import (
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type ServerN struct {
@@ -11,6 +12,10 @@ type ServerN struct {
 }
 
 func (s1 *ServerN) Start() {
+
+	mh := NewMetricsHandler()
+	mh.Get(s1.port)
+	
 	ge := gin.Default()
 	ge.Handle("GET", "/api/fibonacci", func(c *gin.Context) {
 		fmt.Printf("on server: %v\n", s1.port)
@@ -20,6 +25,16 @@ func (s1 *ServerN) Start() {
 			"fibonacci":   out,
 		})
 	})
+
+	ge.Handle("GET", "/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status": "healthy",
+			"port":   s1.port,
+		})
+	})
+
+	ge.Handle("GET", "/metrics", gin.WrapH(promhttp.Handler()))
+
 	_ = ge.Run(fmt.Sprintf(":%s", s1.port))
 }
 

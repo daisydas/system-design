@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/redis/go-redis/v9"
 	"net"
 	"net/http"
 	"strconv"
@@ -11,7 +12,7 @@ import (
 	"system-design/loadbalancer/config/models"
 	"system-design/loadbalancer/health"
 	"system-design/loadbalancer/proxy"
-	"system-design/loadbalancer/pubsub"
+	"system-design/loadbalancer/redisclient"
 	"system-design/loadbalancer/servers"
 	"time"
 )
@@ -41,15 +42,17 @@ func main() {
 
 	go lp.Send(ctx)
 
-	pb := pubsub.NewPubSub(configChanged)
-	pb.Publish(ctx, "pub-sub-channel", pubsub.RedisPubSubMessage{})
-	go pb.Subscribe(ctx, "pub-sub-channel", func(c chan struct{}, message pubsub.RedisPubSubMessage) {
-		c <- struct{}{}
-	})
-
 	sh := serveHandler{reqChan: reqChan}
 	http.HandleFunc("/api/fibonacci", sh.requestHandler)
 
+	ps := redisclient.NewPubSubClient(
+		redis.NewClient(&redis.Options{
+			Addr:         "localhost:6379",
+			DialTimeout:  10 * time.Second,
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+		}), cp, configChanged, "api_read_lb_write", "api_write_lb_read")
+	go ps.ReadFromPubSub(context.Background())
 	fmt.Println("Server starting on :8080...")
 	_ = http.ListenAndServe(":8080", nil)
 
@@ -97,7 +100,6 @@ func (sh *serveHandler) requestHandler(w http.ResponseWriter, r *http.Request) {
 		HttpRequest: r,
 		HttpWriter:  w,
 	}
-
 	select {
 	case <-completed:
 	}

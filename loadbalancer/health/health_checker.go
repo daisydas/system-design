@@ -77,7 +77,7 @@ func (hc *healthChecker) updateConfig() time.Time {
 		case <-hc.configChanged:
 			hc.updateConfig()
 		default:
-			hc.configProcessor.Write(configuration)
+			hc.configProcessor.Write(configuration, config.Create)
 		}
 	}
 	return time.Now().Add(5 * time.Minute)
@@ -85,7 +85,6 @@ func (hc *healthChecker) updateConfig() time.Time {
 
 func NewHealthChecker(processor config.Processor, configChanged <-chan struct{}) Checker {
 	return &healthChecker{
-
 		configProcessor: processor,
 		configChanged:   configChanged,
 	}
